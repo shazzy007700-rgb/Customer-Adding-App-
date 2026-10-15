@@ -29,30 +29,23 @@
     // =========================================================================
     const GOOGLE_SHEET_API_URL = "https://script.google.com/macros/s/AKfycbyJe2StAZroU5Oo5RNYgNQ8il_dyZIxZjyDCVof_DqUPiUs-I9gXUTU-VHP38Ji8mwH/exec";
 
-    // Initial Users List with Super Admin (Credentials can be changed anytime in Admin Panel)
-    const INITIAL_USERS = [
-      { username: 'superadmin', password: 'adminpassword', name: 'Super Admin', role: 'admin' },
-      { username: 'rahim', password: 'rahimpassword', name: 'Rahim (Member)', role: 'member' },
+    // Default Fallback Super Admin in case Sheet is loading
+    const FALLBACK_USERS = [
+      { username: 'rashik', password: '215893', name: 'Rashik (Super Admin)', role: 'admin' }
     ];
 
     const LEAD_SOURCES = [
-      'Facebook',
-      'Instagram',
-      'TikTok',
-      'WhatsApp',
-      'Direct Call',
-      'Google Search',
-      'Others'
+      'Facebook', 'Instagram', 'TikTok', 'WhatsApp', 
+      'Direct Call', 'Google Search', 'Others'
     ];
 
-    function App() {
-      // Dynamic User State (Saved in LocalStorage)
-      const [users, setUsers] = useState(() => {
-        const savedUsers = localStorage.getItem('leadsync_users');
-        return savedUsers ? JSON.parse(savedUsers) : INITIAL_USERS;
-      });
+    const MARITAL_STATUS_OPTIONS = ['Single', 'Married', 'Divorced', 'Widowed', 'Other'];
+    const RESIDENCY_OPTIONS = ['Citizen', 'Permanent Resident', 'Foreigner/Expat', 'Non-Resident', 'Other'];
 
+    function App() {
+      const [users, setUsers] = useState(FALLBACK_USERS);
       const [currentUser, setCurrentUser] = useState(null);
+      
       const [loginUsername, setLoginUsername] = useState('');
       const [loginPassword, setLoginPassword] = useState('');
       const [loginError, setLoginError] = useState('');
@@ -68,6 +61,9 @@
         phone: '',
         age: '',
         profession: '',
+        maritalStatus: 'Single',
+        residency: 'Citizen',
+        nationality: 'Bangladeshi',
         source: 'Facebook'
       });
       const [formAlert, setFormAlert] = useState(null);
@@ -94,10 +90,31 @@
       });
       const [profileAlert, setProfileAlert] = useState(null);
 
-      // Save users to localStorage whenever updated
+      // Fetch All Users Live from Google Sheets
+      const fetchUsersFromSheet = async () => {
+        if (!GOOGLE_SHEET_API_URL) return;
+        try {
+          const res = await fetch(`${GOOGLE_SHEET_API_URL}?action=getUsers`);
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            // Clean keys
+            const parsedUsers = data.map(u => ({
+              username: String(u.Username || u.username || '').trim(),
+              password: String(u.Password || u.password || '').trim(),
+              name: String(u.Name || u.name || '').trim(),
+              role: String(u.Role || u.role || 'member').toLowerCase().trim()
+            })).filter(u => u.username !== '');
+
+            setUsers(parsedUsers);
+          }
+        } catch (err) {
+          console.error("Error fetching users from Google Sheet:", err);
+        }
+      };
+
       useEffect(() => {
-        localStorage.setItem('leadsync_users', JSON.stringify(users));
-      }, [users]);
+        fetchUsersFromSheet();
+      }, []);
 
       useEffect(() => {
         if (currentUser) {
@@ -136,6 +153,7 @@
       useEffect(() => {
         if (currentUser) {
           fetchCustomers();
+          fetchUsersFromSheet();
         }
       }, [currentUser]);
 
@@ -154,12 +172,15 @@
         return customers.find(c => String(c.Phone).trim() === cleanPhone);
       }, [formData.phone, customers]);
 
-      const handleLoginSubmit = (e) => {
+      const handleLoginSubmit = async (e) => {
         e.preventDefault();
         setLoginError('');
 
+        // Re-fetch users before verifying login to ensure fresh credentials
+        await fetchUsersFromSheet();
+
         const foundUser = users.find(
-          u => u.username.toLowerCase() === loginUsername.trim().toLowerCase() && u.password === loginPassword
+          u => u.username.toLowerCase() === loginUsername.trim().toLowerCase() && u.password === loginPassword.trim()
         );
 
         if (foundUser) {
@@ -172,7 +193,7 @@
           setLoginUsername('');
           setLoginPassword('');
         } else {
-          setLoginError('Invalid Username or Password. Please try again.');
+          setLoginError('Invalid Username or Password. Please check Google Sheet "Users" tab.');
         }
       };
 
@@ -182,7 +203,7 @@
         setLoginError('');
       };
 
-      const handleUpdateProfile = (e) => {
+      const handleUpdateProfile = async (e) => {
         e.preventDefault();
         setProfileAlert(null);
 
@@ -191,7 +212,6 @@
           return;
         }
 
-        // Check if username is changing and is taken by another account
         const usernameCheck = users.find(
           u => u.username.toLowerCase() === profileForm.username.trim().toLowerCase() && u.username !== currentUser.username
         );
@@ -214,6 +234,29 @@
           updatedPassword = profileForm.newPassword;
         }
 
+        // Delete old user & add updated user row in sheet
+        try {
+          await fetch(GOOGLE_SHEET_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({ action: 'deleteUser', username: currentUser.username })
+          });
+
+          await fetch(GOOGLE_SHEET_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({ 
+              action: 'addUser', 
+              name: profileForm.name.trim(),
+              username: profileForm.username.trim(),
+              password: updatedPassword,
+              role: currentUser.role
+            })
+          });
+        } catch (err) {
+          console.error("User profile update error:", err);
+        }
+
         const updatedUser = {
           ...currentUser,
           name: profileForm.name.trim(),
@@ -221,12 +264,10 @@
           password: updatedPassword
         };
 
-        const updatedUsersList = users.map(u => u.username === currentUser.username ? updatedUser : u);
-
-        setUsers(updatedUsersList);
         setCurrentUser(updatedUser);
-        setProfileAlert({ type: 'success', message: 'Profile & Password updated successfully!' });
+        setProfileAlert({ type: 'success', message: 'Profile & Password updated directly in Google Sheet!' });
         setProfileForm(prev => ({ ...prev, currentPassword: '', newPassword: '', confirmPassword: '' }));
+        fetchUsersFromSheet();
       };
 
       const handleAddUser = async (e) => {
@@ -260,22 +301,31 @@
             headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify({ action: 'addUser', ...newUser })
           });
+          setUserAlert({ type: 'success', message: `New ${newUser.role.toUpperCase()} "${newUser.name}" saved to Google Sheet!` });
+          setNewUserForm({ name: '', username: '', password: '', role: 'member' });
+          fetchUsersFromSheet();
         } catch (err) {
           console.error("User save to Google Sheet error:", err);
+          setUserAlert({ type: 'error', message: 'Failed to save user to Google Sheet.' });
         }
-
-        setUsers([...users, newUser]);
-        setUserAlert({ type: 'success', message: `New ${newUser.role.toUpperCase()} "${newUser.name}" added successfully!` });
-        setNewUserForm({ name: '', username: '', password: '', role: 'member' });
       };
 
-      const handleDeleteUser = (usernameToDelete) => {
+      const handleDeleteUser = async (usernameToDelete) => {
         if (usernameToDelete === currentUser.username) {
           alert("You cannot delete your own logged-in account!");
           return;
         }
-        if (confirm(`Are you sure you want to delete user "${usernameToDelete}"?`)) {
-          setUsers(users.filter(u => u.username !== usernameToDelete));
+        if (confirm(`Are you sure you want to delete user "${usernameToDelete}" from Google Sheet?`)) {
+          try {
+            await fetch(GOOGLE_SHEET_API_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'text/plain' },
+              body: JSON.stringify({ action: 'deleteUser', username: usernameToDelete })
+            });
+            fetchUsersFromSheet();
+          } catch (err) {
+            console.error("Delete user error:", err);
+          }
         }
       };
 
@@ -303,6 +353,9 @@
           phone: formData.phone.trim(),
           age: formData.age || 'N/A',
           profession: formData.profession || 'N/A',
+          maritalStatus: formData.maritalStatus,
+          residency: formData.residency,
+          nationality: formData.nationality.trim() || 'Bangladeshi',
           source: formData.source,
           addedBy: currentUser.name,
           createdAt: new Date().toISOString()
@@ -316,7 +369,16 @@
           });
 
           setFormAlert({ type: 'success', message: 'Customer details saved successfully to Google Sheet!' });
-          setFormData({ name: '', phone: '', age: '', profession: '', source: 'Facebook' });
+          setFormData({ 
+            name: '', 
+            phone: '', 
+            age: '', 
+            profession: '', 
+            maritalStatus: 'Single', 
+            residency: 'Citizen', 
+            nationality: 'Bangladeshi', 
+            source: 'Facebook' 
+          });
           fetchCustomers();
         } catch (err) {
           console.error(err);
@@ -429,7 +491,7 @@
 
               <div className="flex items-center gap-4">
                 <button
-                  onClick={fetchCustomers}
+                  onClick={() => { fetchCustomers(); fetchUsersFromSheet(); }}
                   disabled={loading}
                   className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-700 transition-all"
                   title="Refresh Data"
@@ -598,23 +660,64 @@
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-400 mb-1">Source Platform</label>
-                    <select
-                      value={formData.source}
-                      onChange={(e) => setFormData({ ...formData, source: e.target.value })}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-blue-500"
-                    >
-                      {LEAD_SOURCES.map(src => (
-                        <option key={src} value={src}>{src}</option>
-                      ))}
-                    </select>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold uppercase text-slate-400 mb-1">Marital Status</label>
+                      <select
+                        value={formData.maritalStatus}
+                        onChange={(e) => setFormData({ ...formData, maritalStatus: e.target.value })}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                      >
+                        {MARITAL_STATUS_OPTIONS.map(opt => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold uppercase text-slate-400 mb-1">Residency Status</label>
+                      <select
+                        value={formData.residency}
+                        onChange={(e) => setFormData({ ...formData, residency: e.target.value })}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                      >
+                        {RESIDENCY_OPTIONS.map(opt => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold uppercase text-slate-400 mb-1">Nationality</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Bangladeshi"
+                        value={formData.nationality}
+                        onChange={(e) => setFormData({ ...formData, nationality: e.target.value })}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold uppercase text-slate-400 mb-1">Source Platform</label>
+                      <select
+                        value={formData.source}
+                        onChange={(e) => setFormData({ ...formData, source: e.target.value })}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                      >
+                        {LEAD_SOURCES.map(src => (
+                          <option key={src} value={src}>{src}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
                   <button
                     type="submit"
                     disabled={loading || Boolean(isFormPhoneDuplicate)}
-                    className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white font-semibold py-3 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2"
+                    className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white font-semibold py-3 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 mt-2"
                   >
                     <i data-lucide={loading ? "refresh-cw" : "user-plus"} className={`w-4 h-4 ${loading ? "animate-spin" : ""}`}></i> Save to Google Sheet
                   </button>
@@ -667,10 +770,12 @@
                             <div key={idx} className="bg-slate-900 p-4 rounded-lg border border-slate-700 flex flex-wrap justify-between items-center gap-2">
                               <div>
                                 <div className="font-bold text-white">{item.Name}</div>
-                                <div className="text-sm text-slate-400 flex items-center gap-3 mt-1">
+                                <div className="text-sm text-slate-400 flex items-center gap-3 mt-1 flex-wrap">
                                   <span>Phone: {item.Phone}</span>
-                                  <span>Source: {item.Source}</span>
                                   <span>Profession: {item.Profession}</span>
+                                  <span>Status: {item.MaritalStatus || 'N/A'}</span>
+                                  <span>Residency: {item.Residency || 'N/A'}</span>
+                                  <span>Nationality: {item.Nationality || 'N/A'}</span>
                                 </div>
                               </div>
                               <div className="bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700 text-xs text-purple-300">
@@ -701,6 +806,9 @@
                           <th className="p-3">Phone</th>
                           <th className="p-3">Age</th>
                           <th className="p-3">Profession</th>
+                          <th className="p-3">Marital Status</th>
+                          <th className="p-3">Residency</th>
+                          <th className="p-3">Nationality</th>
                           <th className="p-3">Source</th>
                         </tr>
                       </thead>
@@ -711,6 +819,9 @@
                             <td className="p-3">{item.Phone}</td>
                             <td className="p-3">{item.Age}</td>
                             <td className="p-3">{item.Profession}</td>
+                            <td className="p-3">{item.MaritalStatus || 'N/A'}</td>
+                            <td className="p-3">{item.Residency || 'N/A'}</td>
+                            <td className="p-3">{item.Nationality || 'N/A'}</td>
                             <td className="p-3"><span className="bg-slate-700 px-2 py-1 rounded text-xs">{item.Source}</span></td>
                           </tr>
                         ))}
@@ -824,6 +935,9 @@
                         <th className="p-3">Phone</th>
                         <th className="p-3">Age</th>
                         <th className="p-3">Profession</th>
+                        <th className="p-3">Marital Status</th>
+                        <th className="p-3">Residency</th>
+                        <th className="p-3">Nationality</th>
                         <th className="p-3">Source</th>
                         <th className="p-3">Added By</th>
                       </tr>
@@ -838,6 +952,9 @@
                             <td className="p-3">{item.Phone}</td>
                             <td className="p-3">{item.Age}</td>
                             <td className="p-3">{item.Profession}</td>
+                            <td className="p-3">{item.MaritalStatus || 'N/A'}</td>
+                            <td className="p-3">{item.Residency || 'N/A'}</td>
+                            <td className="p-3">{item.Nationality || 'N/A'}</td>
                             <td className="p-3"><span className="bg-slate-700 px-2 py-1 rounded text-xs">{item.Source}</span></td>
                             <td className="p-3 text-purple-300 font-medium">{item.AddedBy}</td>
                           </tr>
@@ -961,7 +1078,7 @@
                                 <button
                                   onClick={() => handleDeleteUser(u.username)}
                                   className="p-1.5 text-red-400 hover:bg-red-500/20 rounded-lg transition-all"
-                                  title="Delete User"
+                                  title="Delete User from Sheet"
                                 >
                                   <i data-lucide="trash-2" className="w-4 h-4"></i>
                                 </button>
@@ -1066,7 +1183,7 @@
                     type="submit"
                     className="w-full bg-purple-600 hover:bg-purple-500 text-white font-semibold py-3 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 mt-4"
                   >
-                    <i data-lucide="check" className="w-4 h-4"></i> Save Changes
+                    <i data-lucide="check" className="w-4 h-4"></i> Save Changes to Google Sheet
                   </button>
                 </form>
               </div>
