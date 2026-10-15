@@ -29,10 +29,11 @@
     // =========================================================================
     const GOOGLE_SHEET_API_URL = "https://script.google.com/macros/s/AKfycbyJe2StAZroU5Oo5RNYgNQ8il_dyZIxZjyDCVof_DqUPiUs-I9gXUTU-VHP38Ji8mwH/exec";
 
-    // Initial Default Users (Admin can add more dynamically from Admin Panel)
+    // Initial Users List with Super Admin Rashik
     const INITIAL_USERS = [
-      { username: 'Rashik', password: '215893', name: 'Super Admin', role: 'admin' },
-      { username: 'Shanto', password: '161027', name: 'Super Admin', role: 'admin' },
+      { username: 'rashik', password: '215893', name: 'Rashik (Super Admin)', role: 'admin' },
+      { username: 'admin', password: 'adminpassword', name: 'Admin', role: 'admin' },
+      { username: 'rahim', password: 'rahimpassword', name: 'Rahim (Member)', role: 'member' },
       { username: 'karim', password: 'karimpassword', name: 'Karim (Member)', role: 'member' },
       { username: 'sumon', password: 'sumonpassword', name: 'Sumon (Member)', role: 'member' },
     ];
@@ -162,7 +163,7 @@
         setLoginError('');
       };
 
-      const handleAddUser = (e) => {
+      const handleAddUser = async (e) => {
         e.preventDefault();
         setUserAlert(null);
 
@@ -186,6 +187,16 @@
           password: newUserForm.password,
           role: newUserForm.role
         };
+
+        try {
+          await fetch(GOOGLE_SHEET_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({ action: 'addUser', ...newUser })
+          });
+        } catch (err) {
+          console.error("User save to Google Sheet error:", err);
+        }
 
         setUsers([...users, newUser]);
         setUserAlert({ type: 'success', message: `New ${newUser.role.toUpperCase()} "${newUser.name}" added successfully!` });
@@ -302,7 +313,7 @@
                   <label className="block text-xs font-semibold uppercase text-slate-400 mb-1">Username</label>
                   <input
                     type="text"
-                    placeholder="e.g. admin or rahim"
+                    placeholder="e.g. rashik or rahim"
                     value={loginUsername}
                     onChange={(e) => setLoginUsername(e.target.value)}
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-slate-100 focus:outline-none focus:border-blue-500 text-sm"
@@ -331,9 +342,8 @@
               </form>
 
               <div className="mt-6 pt-4 border-t border-slate-700/60 text-xs text-slate-400 space-y-1">
-                <div className="font-semibold text-slate-300 mb-1">Default Login Credentials:</div>
-                <div className="flex justify-between"><span>Admin:</span> <code className="text-slate-200">admin / adminpassword</code></div>
-                <div className="flex justify-between"><span>Member:</span> <code className="text-slate-200">rahim / rahimpassword</code></div>
+                <div className="font-semibold text-slate-300 mb-1">Super Admin Login:</div>
+                <div className="flex justify-between"><span>Super Admin:</span> <code className="text-purple-300 font-bold">rashik / 215893</code></div>
               </div>
             </div>
           </div>
@@ -768,7 +778,7 @@
               </div>
             )}
 
-            {/* NEW: USER MANAGEMENT TAB FOR ADMIN */}
+            {/* USER MANAGEMENT TAB FOR ADMIN */}
             {activeTab === 'admin_users' && currentUser.role === 'admin' && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700 shadow-lg h-fit">
